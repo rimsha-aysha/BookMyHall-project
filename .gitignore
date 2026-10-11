@@ -1,0 +1,9 @@
+# Secrets — never commit (server/.env holds the Atlas password and JWT secret)
+.env
+.env.*
+!.env.example
+
+node_modules/
+dist/
+server/uploads/
+*.log

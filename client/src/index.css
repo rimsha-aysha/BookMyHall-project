@@ -1,0 +1,183 @@
+/* ======================================================================
+   BookMyHall design tokens + base typography.
+   Warm neutral palette, charcoal text, one bronze accent. Every colour in
+   App.css / components.css comes from these tokens, so the whole app
+   (light and dark) stays consistent.
+   ====================================================================== */
+
+:root {
+  /* Surfaces */
+  --bg: #f7f5f1;            /* warm off-white page */
+  --surface: #ffffff;       /* cards */
+  --surface-2: #fbfaf7;     /* subtle inset areas */
+  --code-bg: #f0ece5;       /* chips, skeleton base, neutral fills */
+  --border: #e5dfd5;
+  --border-strong: #d3cbbd;
+
+  /* Text */
+  --text-h: #1f1d1a;        /* charcoal headings/body emphasis */
+  --text-body: #3a3631;
+  --text: #6b645a;          /* muted secondary (≥ 4.5:1 on --bg) */
+
+  /* Accent — refined bronze for primary actions & highlights */
+  --accent: #8c5d2a;
+  --accent-hover: #74491d;
+  --accent-bg: rgba(140, 93, 42, 0.09);
+  --accent-border: rgba(140, 93, 42, 0.35);
+  --on-accent: #ffffff;
+
+  /* Status */
+  --success: #2f7a4f;
+  --success-bg: rgba(47, 122, 79, 0.1);
+  --warning: #9a6200;
+  --warning-bg: rgba(196, 132, 20, 0.13);
+  --danger: #b23a2e;
+  --danger-bg: rgba(178, 58, 46, 0.09);
+  --info: #3d5f80;
+  --info-bg: rgba(61, 95, 128, 0.1);
+
+  /* Shape & depth */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow-sm: 0 1px 2px rgba(31, 29, 26, 0.05);
+  --shadow: 0 1px 2px rgba(31, 29, 26, 0.04), 0 6px 18px -8px rgba(31, 29, 26, 0.14);
+  --focus: 0 0 0 3px rgba(140, 93, 42, 0.3);
+
+  /* Type */
+  --sans: "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
+  --heading: "Playfair Display", Georgia, "Times New Roman", serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  --container: 1200px;
+  --header-h: 68px;
+
+  font: 16px/1.6 var(--sans);
+  color: var(--text-body);
+  background: var(--bg);
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151412;
+    --surface: #1d1b19;
+    --surface-2: #191816;
+    --code-bg: #26231f;
+    --border: #322e29;
+    --border-strong: #443f38;
+
+    --text-h: #f3efe8;
+    --text-body: #d9d3c9;
+    --text: #a59d91;
+
+    --accent: #d4a66a;
+    --accent-hover: #e2b97f;
+    --accent-bg: rgba(212, 166, 106, 0.13);
+    --accent-border: rgba(212, 166, 106, 0.4);
+    --on-accent: #1d1810;
+
+    --success: #6cc595;
+    --success-bg: rgba(108, 197, 149, 0.13);
+    --warning: #e2b04f;
+    --warning-bg: rgba(226, 176, 79, 0.14);
+    --danger: #ef8a7f;
+    --danger-bg: rgba(239, 138, 127, 0.12);
+    --info: #8fb4d8;
+    --info-bg: rgba(143, 180, 216, 0.13);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 22px -10px rgba(0, 0, 0, 0.55);
+    --focus: 0 0 0 3px rgba(212, 166, 106, 0.35);
+    color-scheme: dark;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  overflow-x: hidden;
+  overflow-wrap: break-word;
+}
+
+#root {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Typography ---- */
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--text-h);
+  margin: 0;
+  overflow-wrap: break-word;
+}
+
+h1,
+h2 {
+  font-family: var(--heading);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+h1 { font-size: clamp(1.9rem, 1.4rem + 2vw, 2.6rem); }
+h2 { font-size: clamp(1.3rem, 1.15rem + 0.6vw, 1.6rem); margin-bottom: 12px; }
+
+h3 {
+  font-family: var(--sans);
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 20px 0 8px;
+}
+
+h4 { font-size: 0.95rem; font-weight: 600; }
+
+p { margin: 0 0 8px; }
+p:last-child { margin-bottom: 0; }
+
+strong,
+b { font-weight: 600; color: var(--text-h); }
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+a:hover { color: var(--accent-hover); }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  color: var(--text-h);
+}
+
+::selection { background: var(--accent-bg); }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
