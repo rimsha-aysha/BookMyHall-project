@@ -3,12 +3,21 @@ import { protect, authorize, requirePermission } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { ROLES } from "../config/roles.js";
 import { PERMISSIONS } from "../config/permissions.js";
-import { paymentVerifyRules, paymentFailureRules } from "../validators/payment.validators.js";
+import {
+  paymentVerifyRules,
+  paymentFailureRules,
+  offlinePaymentRecordRules,
+  offlinePaymentIdRules,
+  offlinePaymentCancelRules,
+} from "../validators/payment.validators.js";
 import {
   createPaymentOrder,
   verifyPayment,
   recordPaymentFailure,
   getPaymentForBooking,
+  recordOfflinePayment,
+  confirmOfflinePayment,
+  cancelOfflinePayment,
 } from "../controllers/payment.controller.js";
 
 const router = Router();
@@ -43,6 +52,37 @@ router.get(
   authorize(ROLES.CUSTOMER, ROLES.MANAGER, ROLES.OWNER),
   requirePermission(PERMISSIONS.PAYMENT_VIEWING),
   getPaymentForBooking
+);
+
+// Offline payments (cash/UPI/bank transfer/other) — Manager/Owner only,
+// checked here on the server whatever the UI shows. A Manager needs both
+// payment viewing and the Owner-controlled payment recording permission.
+const offlinePaymentStaff = [
+  protect,
+  authorize(ROLES.MANAGER, ROLES.OWNER),
+  requirePermission(PERMISSIONS.PAYMENT_VIEWING),
+  requirePermission(PERMISSIONS.PAYMENT_RECORDING),
+];
+router.post(
+  "/booking/:bookingId/offline",
+  ...offlinePaymentStaff,
+  offlinePaymentRecordRules,
+  validate,
+  recordOfflinePayment
+);
+router.post(
+  "/offline/:paymentId/confirm",
+  ...offlinePaymentStaff,
+  offlinePaymentIdRules,
+  validate,
+  confirmOfflinePayment
+);
+router.post(
+  "/offline/:paymentId/cancel",
+  ...offlinePaymentStaff,
+  offlinePaymentCancelRules,
+  validate,
+  cancelOfflinePayment
 );
 
 export default router;

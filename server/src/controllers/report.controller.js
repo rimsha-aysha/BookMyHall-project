@@ -8,7 +8,7 @@ import Review from "../models/Review.js";
 import EventGallery from "../models/EventGallery.js";
 import { ROLES } from "../config/roles.js";
 import { ALL_BOOKING_STATUSES, BOOKING_STATUS } from "../config/bookingStatus.js";
-import { PAYMENT_STATUS } from "../config/paymentStatus.js";
+import { PAYMENT_STATUS, PAYMENT_GATEWAY, BOOKING_PAYMENT_STATUS } from "../config/paymentStatus.js";
 import { TASK_STATUS } from "../config/taskStatus.js";
 import { ISSUE_STATUS } from "../config/issueStatus.js";
 import { ALL_PREPARATION_STATUSES } from "../config/preparationStatus.js";
@@ -200,6 +200,7 @@ export const getCustomerDirectory = async (req, res, next) => {
 
     const bookingCountByCustomer = new Map();
     bookings.forEach((b) => {
+      if (!b.customer) return; // walk-in booking without an account
       const cid = b.customer.toString();
       bookingCountByCustomer.set(cid, (bookingCountByCustomer.get(cid) || 0) + 1);
     });
@@ -223,13 +224,17 @@ export const getCustomerDirectory = async (req, res, next) => {
 export const getPaymentList = async (req, res, next) => {
   try {
     // Checkouts that were opened but never completed (PENDING) aren't payments
-    // yet; successful and failed attempts are listed.
-    const payments = await Payment.find({ status: { $ne: PAYMENT_STATUS.PENDING } })
+    // yet; successful and failed attempts are listed, plus offline payments
+    // recorded by staff that are still awaiting confirmation.
+    const payments = await Payment.find({
+      $or: [{ status: { $ne: PAYMENT_STATUS.PENDING } }, { gateway: PAYMENT_GATEWAY.OFFLINE }],
+    })
       .sort({ createdAt: -1 })
       .populate("customer", "name email")
+      .populate("confirmedBy", "name")
       .populate({
         path: "booking",
-        select: "eventType eventDate hall",
+        select: "eventType eventDate hall source walkInCustomer",
         populate: { path: "hall", select: "name" },
       });
 
@@ -241,14 +246,20 @@ export const getPaymentList = async (req, res, next) => {
             hallName: p.booking.hall?.name || null,
             eventType: p.booking.eventType,
             eventDate: p.booking.eventDate,
+            source: p.booking.source || "online",
           }
         : null,
-      customer: p.customer ? { name: p.customer.name, email: p.customer.email } : null,
+      customer: p.customer
+        ? { name: p.customer.name, email: p.customer.email }
+        : p.booking?.walkInCustomer
+          ? { name: p.booking.walkInCustomer.name, email: p.booking.walkInCustomer.email || "", walkIn: true }
+          : null,
       amount: p.amount,
       status: p.status,
       method: p.method,
       gateway: p.gateway,
-      transactionId: p.transactionId,
+      transactionId: p.gateway === PAYMENT_GATEWAY.OFFLINE ? p.reference || null : p.transactionId,
+      confirmedBy: p.confirmedBy?.name || null,
       paymentDate: p.paidAt || p.createdAt,
     }));
 
@@ -265,12 +276,13 @@ export const getPaymentList = async (req, res, next) => {
 // via getOverview above.
 export const getManagerOverview = async (req, res, next) => {
   try {
-    const [bookings, payments, tasks, issues, coordinators] = await Promise.all([
+    const [bookings, payments, tasks, issues, coordinators, offlineAwaitingConfirmation] = await Promise.all([
       Booking.find({}),
       Payment.find({ status: PAYMENT_STATUS.SUCCESS }),
       PreparationTask.find({}),
       Issue.find({}),
       User.find({ role: ROLES.COORDINATOR }).select("name email"),
+      Payment.countDocuments({ gateway: PAYMENT_GATEWAY.OFFLINE, status: PAYMENT_STATUS.PENDING }),
     ]);
 
     const byStatus = computeBookingStatusBreakdown(bookings);
@@ -278,7 +290,12 @@ export const getManagerOverview = async (req, res, next) => {
     const paidBookingIds = new Set(payments.map((p) => p.booking.toString()));
     const paymentSummary = {
       awaitingPayment: byStatus[BOOKING_STATUS.APPROVED] || 0,
+      // Bookings with any payment received (advance or more) — as before.
       paid: bookings.filter((b) => paidBookingIds.has(b._id.toString())).length,
+      partiallyPaid: bookings.filter((b) => b.paymentStatus === BOOKING_PAYMENT_STATUS.PARTIALLY_PAID).length,
+      fullyPaid: bookings.filter((b) => b.paymentStatus === BOOKING_PAYMENT_STATUS.PAID).length,
+      offlineAwaitingConfirmation,
+      walkInBookings: bookings.filter((b) => b.source === "walk_in").length,
     };
 
     const preparationSummary = Object.fromEntries(ALL_PREPARATION_STATUSES.map((s) => [s, 0]));

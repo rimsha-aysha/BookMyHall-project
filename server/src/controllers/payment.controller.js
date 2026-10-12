@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import Payment from "../models/Payment.js";
 import Booking from "../models/Booking.js";
 import User from "../models/User.js";
@@ -9,6 +10,14 @@ import {
   PAYMENT_CURRENCY,
   ALL_PAYMENT_METHODS,
 } from "../config/paymentStatus.js";
+import {
+  calculateAdvanceAmount,
+  getPaymentTotals,
+  remainingBalanceOf,
+  refreshBookingPayment,
+  buildPaymentSummary,
+  withBookingPaymentLock,
+} from "../services/paymentLedger.js";
 import {
   isRazorpayConfigured,
   getRazorpay,
@@ -28,12 +37,6 @@ import { toE164India } from "../utils/phone.js";
 //      the booking CONFIRMED.
 // The booking is never confirmed on the browser's word alone.
 
-// Single source of truth for the advance-amount calculation — used both when
-// charging (createPaymentOrder) and when previewing it (getPaymentForBooking),
-// so the two can never disagree.
-const calculateAdvanceAmount = (totalCost, advancePercentage) =>
-  Math.round((totalCost * advancePercentage) / 100);
-
 const NOT_PAYABLE_REASONS = {
   [BOOKING_STATUS.PENDING]: "This booking is still awaiting approval — payment opens once it's approved",
   [BOOKING_STATUS.REJECTED]: "This booking was rejected and can't be paid for",
@@ -51,25 +54,32 @@ const loadOwnBooking = async (req, res, next) => {
     fail(res, next, 404, "Booking not found");
     return null;
   }
-  if (booking.customer.toString() !== req.user.id) {
+  // Walk-in bookings may have no customer account — nobody can pay those
+  // online; staff record their payments offline instead.
+  if (booking.customer?.toString() !== req.user.id) {
     fail(res, next, 403, "Not authorized to pay for this booking");
     return null;
   }
   return booking;
 };
 
-const findSuccessfulPayment = (bookingId) =>
-  Payment.findOne({ booking: bookingId, status: PAYMENT_STATUS.SUCCESS });
+const findSuccessfulRazorpayPayment = (bookingId) =>
+  Payment.findOne({ booking: bookingId, gateway: PAYMENT_GATEWAY.RAZORPAY, status: PAYMENT_STATUS.SUCCESS });
 
 const describeRazorpayError = (error) => error?.error?.description || error?.message || "Unknown error";
 
-// What the payment page shows after a successful payment.
-const paymentResult = (payment, booking) => ({
-  payment,
-  booking: { _id: booking._id, status: booking.status },
-  totalCost: booking.estimatedCost,
-  remainingBalance: booking.estimatedCost - payment.amount,
-});
+// What the payment page shows after a successful payment. The balance comes
+// from every successful payment (online and offline), not just this one.
+const paymentResult = async (payment, booking) => {
+  const { totalPaid } = await getPaymentTotals(booking._id);
+  return {
+    payment,
+    booking: { _id: booking._id, status: booking.status, paymentStatus: booking.paymentStatus },
+    totalCost: booking.estimatedCost,
+    totalPaid,
+    remainingBalance: remainingBalanceOf(booking.estimatedCost, totalPaid),
+  };
+};
 
 class PaymentError extends Error {
   constructor(status, message) {
@@ -81,7 +91,9 @@ class PaymentError extends Error {
 // Marks a pending Razorpay Payment successful and confirms its booking, from
 // a payment object fetched directly from Razorpay's API (trusted data).
 // Idempotent and race-safe: only one caller can flip the record to SUCCESS,
-// and the one_success_per_booking index rejects a second successful payment.
+// and the one_razorpay_success_per_booking index rejects a second successful
+// Razorpay payment. This is the only path that marks a Razorpay payment
+// SUCCESS — staff can't confirm Razorpay records by hand.
 const finalizePayment = async (payment, rzpPayment, signature) => {
   if (rzpPayment.order_id !== payment.razorpayOrderId) {
     throw new PaymentError(400, "Payment does not belong to this order");
@@ -135,6 +147,7 @@ const finalizePayment = async (payment, rzpPayment, signature) => {
     { _id: result.booking, status: BOOKING_STATUS.APPROVED },
     { $set: { status: BOOKING_STATUS.CONFIRMED } }
   );
+  await refreshBookingPayment(result.booking);
   return result;
 };
 
@@ -149,7 +162,7 @@ export const createPaymentOrder = async (req, res, next) => {
     const booking = await loadOwnBooking(req, res, next);
     if (!booking) return;
 
-    if (await findSuccessfulPayment(booking._id)) {
+    if (await findSuccessfulRazorpayPayment(booking._id)) {
       return fail(res, next, 409, "This booking has already been paid for");
     }
     if (booking.status !== BOOKING_STATUS.APPROVED) {
@@ -162,8 +175,17 @@ export const createPaymentOrder = async (req, res, next) => {
     }
 
     // Amount comes from the booking and Owner settings — never the client.
+    // Whatever was already received offline (confirmed by staff) counts
+    // towards the advance, so only the rest of it is charged online.
     const settings = await getOrCreateSettings();
-    const advanceAmount = calculateAdvanceAmount(booking.estimatedCost, settings.advancePaymentPercentage);
+    const { totalPaid } = await getPaymentTotals(booking._id);
+    const advanceAmount = Math.max(
+      0,
+      calculateAdvanceAmount(booking.estimatedCost, settings.advancePaymentPercentage) - totalPaid
+    );
+    if (totalPaid > 0 && advanceAmount < 1) {
+      return fail(res, next, 409, "The advance for this booking has already been received");
+    }
     if (advanceAmount < 1) {
       return fail(res, next, 400, "The advance amount for this booking is too small to pay online");
     }
@@ -195,7 +217,7 @@ export const createPaymentOrder = async (req, res, next) => {
         if (paid) {
           const result = await finalizePayment(payment, paid);
           const fresh = await Booking.findById(booking._id);
-          return res.json({ success: true, data: { alreadyPaid: true, ...paymentResult(result, fresh) } });
+          return res.json({ success: true, data: { alreadyPaid: true, ...(await paymentResult(result, fresh)) } });
         }
       }
     }
@@ -284,8 +306,8 @@ export const verifyPayment = async (req, res, next) => {
         { _id: booking._id, status: BOOKING_STATUS.APPROVED },
         { $set: { status: BOOKING_STATUS.CONFIRMED } }
       );
-      const fresh = await Booking.findById(booking._id);
-      return res.json({ success: true, data: { alreadyProcessed: true, ...paymentResult(payment, fresh) } });
+      const fresh = await refreshBookingPayment(booking._id);
+      return res.json({ success: true, data: { alreadyProcessed: true, ...(await paymentResult(payment, fresh)) } });
     }
 
     if (!isValidPaymentSignature(orderId, paymentId, signature)) {
@@ -302,7 +324,7 @@ export const verifyPayment = async (req, res, next) => {
 
     const result = await finalizePayment(payment, rzpPayment, signature);
     const fresh = await Booking.findById(booking._id);
-    res.json({ success: true, data: paymentResult(result, fresh) });
+    res.json({ success: true, data: await paymentResult(result, fresh) });
   } catch (error) {
     if (error instanceof PaymentError) return fail(res, next, error.status, error.message);
     if (error?.error?.description) {
@@ -342,8 +364,10 @@ export const recordPaymentFailure = async (req, res, next) => {
 
 // Owning customer or manager/owner. Returns the total cost, the configured
 // advance percentage/amount (so the customer can see what's due before
-// paying), the successful payment record if one exists, and the remaining
-// balance (equal to the full cost when nothing has been paid yet).
+// paying), the total paid so far (online + confirmed offline), the remaining
+// balance and the payment history. Customers see only their successful
+// payments; managers also see unconfirmed/cancelled offline records and who
+// recorded/confirmed each one.
 export const getPaymentForBooking = async (req, res, next) => {
   try {
     const booking = await Booking.findById(req.params.bookingId);
@@ -352,36 +376,226 @@ export const getPaymentForBooking = async (req, res, next) => {
       return next(new Error("Booking not found"));
     }
 
-    const isOwner = booking.customer.toString() === req.user.id;
+    const isOwner = Boolean(booking.customer) && booking.customer.toString() === req.user.id;
     const isManagement = [ROLES.MANAGER, ROLES.OWNER].includes(req.user.role);
     if (!isOwner && !isManagement) {
       res.status(403);
       return next(new Error("Not authorized to view payment information for this booking"));
     }
 
-    const settings = await getOrCreateSettings();
-    const advanceAmount = calculateAdvanceAmount(
-      booking.estimatedCost,
-      settings.advancePaymentPercentage
-    );
-
-    const payment = await Payment.findOne({
-      booking: booking._id,
-      status: PAYMENT_STATUS.SUCCESS,
-    }).sort({ createdAt: -1 });
-
-    res.json({
-      success: true,
-      data: {
-        totalCost: booking.estimatedCost,
-        advancePercentage: settings.advancePaymentPercentage,
-        advanceAmount,
-        currency: PAYMENT_CURRENCY,
-        payment: payment || null,
-        remainingBalance: booking.estimatedCost - (payment ? payment.amount : 0),
-      },
-    });
+    res.json({ success: true, data: await buildPaymentSummary(booking, { forManagement: isManagement }) });
   } catch (error) {
+    next(error);
+  }
+};
+
+// ---- Offline payments (cash / UPI / bank transfer / other) ----
+// Recorded by a manager/owner against a booking. A record only counts towards
+// the booking's total once a manager confirms the money was actually
+// received (status SUCCESS). Records are never deleted or edited after the
+// fact — an unconfirmed one entered by mistake is cancelled (kept as FAILED).
+
+// Payment can be taken once a booking has been approved — including the
+// balance on (or after) the event day.
+const OFFLINE_PAYABLE_STATUSES = [
+  BOOKING_STATUS.APPROVED,
+  BOOKING_STATUS.CONFIRMED,
+  BOOKING_STATUS.UPCOMING,
+  BOOKING_STATUS.COMPLETED,
+];
+
+const normalizeReference = (reference) => reference.replace(/\s+/g, "").toUpperCase();
+
+const OFFLINE_STAFF_POPULATE = [
+  { path: "recordedBy", select: "name email" },
+  { path: "confirmedBy", select: "name email" },
+  { path: "cancelledBy", select: "name email" },
+];
+
+const offlineResponse = async (payment) => {
+  const booking = await Booking.findById(payment.booking);
+  await payment.populate(OFFLINE_STAFF_POPULATE);
+  return {
+    payment,
+    booking: { _id: booking._id, status: booking.status, paymentStatus: booking.paymentStatus },
+    summary: await buildPaymentSummary(booking, { forManagement: true }),
+  };
+};
+
+// POST /api/payments/booking/:bookingId/offline — records money received
+// outside Razorpay. With confirmReceived: true the same manager also
+// confirms it in one step (they have the money/transfer verified in hand);
+// otherwise it waits, unconfirmed, for a "Confirm payment received" action.
+export const recordOfflinePayment = async (req, res, next) => {
+  try {
+    const { amount, method, paymentDate, reference, notes, idempotencyKey, confirmReceived } = req.body;
+
+    const payment = await withBookingPaymentLock(req.params.bookingId, async () => {
+      const booking = await Booking.findById(req.params.bookingId);
+      if (!booking) throw new PaymentError(404, "Booking not found");
+      if (!OFFLINE_PAYABLE_STATUSES.includes(booking.status)) {
+        throw new PaymentError(
+          400,
+          booking.status === BOOKING_STATUS.PENDING
+            ? "Approve this booking before recording a payment for it"
+            : "Payments can't be recorded for a rejected booking"
+        );
+      }
+
+      if (idempotencyKey && (await Payment.exists({ idempotencyKey }))) {
+        throw new PaymentError(409, "This payment has already been recorded");
+      }
+
+      // A transfer reference (UTR etc.) identifies one real transfer, so it
+      // can't be recorded twice — on this or any other booking.
+      const referenceKey = reference ? normalizeReference(reference) : undefined;
+      if (
+        referenceKey &&
+        (await Payment.exists({
+          gateway: PAYMENT_GATEWAY.OFFLINE,
+          referenceKey,
+          status: { $ne: PAYMENT_STATUS.FAILED },
+        }))
+      ) {
+        throw new PaymentError(409, "A payment with this transaction reference has already been recorded");
+      }
+
+      // Recorded-but-unconfirmed amounts count here too, so open records can
+      // never add up to more than is actually owed.
+      const { totalPaid, pendingOfflineAmount } = await getPaymentTotals(booking._id);
+      const remaining = remainingBalanceOf(booking.estimatedCost, totalPaid);
+      const available = Math.max(0, remaining - pendingOfflineAmount);
+      if (remaining <= 0) throw new PaymentError(409, "This booking is already fully paid");
+      if (amount > available) {
+        throw new PaymentError(
+          400,
+          pendingOfflineAmount > 0
+            ? `Amount exceeds the outstanding balance: Rs. ${pendingOfflineAmount} of the Rs. ${remaining} due is already recorded and awaiting confirmation, so at most Rs. ${available} can be recorded`
+            : `Amount exceeds the outstanding balance of Rs. ${remaining}`
+        );
+      }
+
+      const now = new Date();
+      const confirmNow = confirmReceived === true;
+      try {
+        return await Payment.create({
+          booking: booking._id,
+          customer: booking.customer || null,
+          amount,
+          currency: PAYMENT_CURRENCY,
+          gateway: PAYMENT_GATEWAY.OFFLINE,
+          method,
+          transactionId: `OFF-${crypto.randomUUID()}`,
+          status: confirmNow ? PAYMENT_STATUS.SUCCESS : PAYMENT_STATUS.PENDING,
+          paidAt: new Date(paymentDate),
+          reference: reference || undefined,
+          referenceKey,
+          notes: notes || undefined,
+          recordedBy: req.user.id,
+          recordedAt: now,
+          ...(confirmNow && { confirmedBy: req.user.id, confirmedAt: now }),
+          idempotencyKey: idempotencyKey || undefined,
+        });
+      } catch (error) {
+        if (error?.code === 11000) throw new PaymentError(409, "This payment has already been recorded");
+        throw error;
+      }
+    });
+
+    await refreshBookingPayment(payment.booking);
+    res.status(201).json({ success: true, data: await offlineResponse(payment) });
+  } catch (error) {
+    if (error instanceof PaymentError) return fail(res, next, error.status, error.message);
+    next(error);
+  }
+};
+
+// Loads an offline payment for confirm/cancel, refusing anything else — in
+// particular Razorpay records, which only Razorpay's verification settles.
+const loadOfflinePayment = async (paymentId) => {
+  const payment = await Payment.findById(paymentId);
+  if (!payment) throw new PaymentError(404, "Payment not found");
+  if (payment.gateway !== PAYMENT_GATEWAY.OFFLINE) {
+    throw new PaymentError(
+      400,
+      "Online (Razorpay) payments are confirmed only through Razorpay verification and can't be confirmed manually"
+    );
+  }
+  return payment;
+};
+
+// POST /api/payments/offline/:paymentId/confirm — the manager confirms the
+// money has actually been received. Only now does it count as paid.
+export const confirmOfflinePayment = async (req, res, next) => {
+  try {
+    const { booking: bookingId } = await loadOfflinePayment(req.params.paymentId);
+
+    const confirmed = await withBookingPaymentLock(bookingId, async () => {
+      const payment = await loadOfflinePayment(req.params.paymentId);
+      if (payment.status === PAYMENT_STATUS.SUCCESS) {
+        throw new PaymentError(409, "This payment has already been confirmed");
+      }
+      if (payment.status !== PAYMENT_STATUS.PENDING) {
+        throw new PaymentError(400, "This payment record was cancelled and can't be confirmed");
+      }
+
+      const booking = await Booking.findById(payment.booking);
+      if (!booking) throw new PaymentError(404, "Booking not found");
+      const { totalPaid } = await getPaymentTotals(booking._id);
+      const remaining = remainingBalanceOf(booking.estimatedCost, totalPaid);
+      if (payment.amount > remaining) {
+        throw new PaymentError(
+          400,
+          `Confirming Rs. ${payment.amount} would exceed the outstanding balance of Rs. ${remaining}. Cancel this record instead.`
+        );
+      }
+
+      // Conditional on PENDING, so a double-click can't confirm it twice.
+      const updated = await Payment.findOneAndUpdate(
+        { _id: payment._id, status: PAYMENT_STATUS.PENDING },
+        { $set: { status: PAYMENT_STATUS.SUCCESS, confirmedBy: req.user.id, confirmedAt: new Date() } },
+        { returnDocument: "after" }
+      );
+      if (!updated) throw new PaymentError(409, "This payment has already been confirmed");
+      return updated;
+    });
+
+    await refreshBookingPayment(confirmed.booking);
+    res.json({ success: true, data: await offlineResponse(confirmed) });
+  } catch (error) {
+    if (error instanceof PaymentError) return fail(res, next, error.status, error.message);
+    next(error);
+  }
+};
+
+// POST /api/payments/offline/:paymentId/cancel — withdraws an unconfirmed
+// record (entered by mistake, or the transfer never arrived). Kept in the
+// history as FAILED; confirmed payments can't be cancelled.
+export const cancelOfflinePayment = async (req, res, next) => {
+  try {
+    const payment = await loadOfflinePayment(req.params.paymentId);
+    if (payment.status === PAYMENT_STATUS.SUCCESS) {
+      return fail(res, next, 400, "A confirmed payment can't be cancelled");
+    }
+
+    const updated = await Payment.findOneAndUpdate(
+      { _id: payment._id, status: PAYMENT_STATUS.PENDING },
+      {
+        $set: {
+          status: PAYMENT_STATUS.FAILED,
+          failureReason: String(req.body.reason || "Cancelled by staff").slice(0, 300),
+          cancelledBy: req.user.id,
+          cancelledAt: new Date(),
+        },
+      },
+      { returnDocument: "after" }
+    );
+    if (!updated) return fail(res, next, 409, "This payment record has already been cancelled");
+
+    await refreshBookingPayment(updated.booking);
+    res.json({ success: true, data: await offlineResponse(updated) });
+  } catch (error) {
+    if (error instanceof PaymentError) return fail(res, next, error.status, error.message);
     next(error);
   }
 };

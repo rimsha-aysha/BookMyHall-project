@@ -7,60 +7,11 @@ import SmartSuggestions from "../../components/SmartSuggestions.jsx";
 import AvailabilityCalendar from "../../components/AvailabilityCalendar.jsx";
 import PageHeader from "../../components/PageHeader.jsx";
 import Icon from "../../components/Icon.jsx";
+import { SelectableItemList, Section } from "../../components/BookingFormParts.jsx";
+import { EVENT_TYPES, toggleId } from "../../utils/booking.js";
 import { LoadingState, ErrorState } from "../../components/States.jsx";
 import { usePublicSettings } from "../../hooks/usePublicSettings.js";
 import { resolveImageUrl, formatRs, formatDate, formatTimeRange, todayInputValue, apiError } from "../../utils/format.js";
-
-const EVENT_TYPES = ["Wedding", "Birthday", "Engagement", "Corporate Event", "Conference", "Anniversary", "Other"];
-
-const toggleId = (ids, id) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
-
-const groupByCategory = (items) =>
-  (items || []).reduce((acc, item) => {
-    const key = item.category || "Other";
-    (acc[key] = acc[key] || []).push(item);
-    return acc;
-  }, {});
-
-// Shared checkbox-card block for Food/Decorations/Additional Services —
-// same "pick any number of active items, show price" shape for all three,
-// grouped by the item's category.
-const SelectableItemList = ({ items, selectedIds, onToggle }) => {
-  if (!items || items.length === 0) return <p className="muted">None available right now.</p>;
-  return Object.entries(groupByCategory(items)).map(([category, group]) => (
-    <div key={category} className="option-group">
-      <p className="course-label">{category}</p>
-      <div className="option-grid">
-        {group.map((item) => {
-          const checked = selectedIds.includes(item._id);
-          return (
-            <label key={item._id} className={`option-card ${checked ? "selected" : ""}`}>
-              <input type="checkbox" checked={checked} onChange={() => onToggle(item._id)} />
-              <span className="option-body">
-                <span className="option-title">{item.name}</span>
-                {item.description && <span className="option-desc clamp-2">{item.description}</span>}
-              </span>
-              <span className="price">{formatRs(item.price)}</span>
-            </label>
-          );
-        })}
-      </div>
-    </div>
-  ));
-};
-
-const Section = ({ number, title, subtitle, children, id }) => (
-  <section className="booking-section" id={id}>
-    <div className="booking-section-head">
-      <span className="step-number">{number}</span>
-      <div>
-        <h2>{title}</h2>
-        {subtitle && <p className="muted small">{subtitle}</p>}
-      </div>
-    </div>
-    {children}
-  </section>
-);
 
 const BookingPage = () => {
   const [searchParams] = useSearchParams();

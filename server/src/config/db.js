@@ -18,4 +18,8 @@ export const connectDB = async () => {
     console.error(`MongoDB connection error: ${error.message}`);
     process.exit(1);
   }
+
+  // Imported lazily so scripts that only need getMongoUri don't load models.
+  const { runPaymentMigrations } = await import("../services/paymentLedger.js");
+  await runPaymentMigrations();
 };

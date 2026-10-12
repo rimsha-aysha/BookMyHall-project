@@ -2,6 +2,8 @@ import api from "./axiosInstance.js";
 
 export const bookingApi = {
   create: (data) => api.post("/bookings", data),
+  // Staff-entered booking for a customer at the venue (no account needed).
+  createWalkIn: (data) => api.post("/bookings/walk-in", data),
   listMine: () => api.get("/bookings/my"),
   getById: (id) => api.get(`/bookings/${id}`),
   listAll: () => api.get("/bookings/manage/all"),

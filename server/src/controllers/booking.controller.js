@@ -6,9 +6,10 @@ import Decoration from "../models/Decoration.js";
 import AdditionalService from "../models/AdditionalService.js";
 import User from "../models/User.js";
 import { ROLES } from "../config/roles.js";
-import { BOOKING_STATUS, NON_BLOCKING_BOOKING_STATUSES } from "../config/bookingStatus.js";
+import { BOOKING_STATUS, BOOKING_SOURCE, NON_BLOCKING_BOOKING_STATUSES } from "../config/bookingStatus.js";
 import { PREPARATION_STATUS } from "../config/preparationStatus.js";
 import { syncPreparationTasks, allRequiredTasksCompleted } from "../services/preparationTasks.js";
+import { createKeyedLock } from "../utils/keyedLock.js";
 
 const SELECTION_POPULATE = [
   { path: "customer", select: "name email" },
@@ -22,10 +23,12 @@ const SELECTION_POPULATE = [
 ];
 
 // Manager/Owner booking details also get the customer's phone number so staff
-// can contact them; customers and coordinators get SELECTION_POPULATE as-is.
-const MANAGEMENT_POPULATE = SELECTION_POPULATE.map((p) =>
-  p.path === "customer" ? { ...p, select: "name email phone" } : p
-);
+// can contact them (and who entered a walk-in booking); customers and
+// coordinators get SELECTION_POPULATE as-is.
+const MANAGEMENT_POPULATE = [
+  ...SELECTION_POPULATE.map((p) => (p.path === "customer" ? { ...p, select: "name email phone" } : p)),
+  { path: "createdBy", select: "name email" },
+];
 
 // Manual manager transitions only. approved -> confirmed happens exclusively
 // via a successful payment (see payment.controller.js) and is deliberately
@@ -62,25 +65,8 @@ const findConflictingBooking = (hallId, eventDate, startTime, endTime) =>
 
 // Serializes the conflict-check + insert for the same hall/date so two
 // simultaneous requests for an overlapping slot can't both pass the check
-// before either is saved. In-process only — fine for this single-instance
-// deployment; a multi-instance deployment would need a DB-level lock.
-const hallDateLocks = new Map();
-const withHallDateLock = async (key, fn) => {
-  const previous = hallDateLocks.get(key) || Promise.resolve();
-  let release;
-  const current = new Promise((resolve) => {
-    release = resolve;
-  });
-  const tail = previous.then(() => current);
-  hallDateLocks.set(key, tail);
-  await previous;
-  try {
-    return await fn();
-  } finally {
-    release();
-    if (hallDateLocks.get(key) === tail) hallDateLocks.delete(key);
-  }
-};
+// before either is saved.
+const withHallDateLock = createKeyedLock();
 
 // Time slots already taken (non-rejected bookings) for a hall on a date —
 // times only, no customer details — so the customer can pick a free slot.
@@ -110,106 +96,147 @@ const priceActiveItems = async (Model, ids = []) => {
   };
 };
 
-export const createBooking = async (req, res, next) => {
-  try {
-    const {
-      hall: hallId,
+class BookingError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// Shared by createBooking (customer, online) and createWalkInBooking
+// (manager, at the venue): validates the hall and capacity, prices every
+// selection server-side from active catalog items, and inserts under the
+// hall/date lock after a final double-booking check. `extra` carries the
+// fields that differ between the two (customer/source/status...).
+const createPricedBooking = async (body, extra) => {
+  const {
+    hall: hallId,
+    eventType,
+    eventDate,
+    startTime,
+    endTime,
+    guestCount,
+    requirements,
+    package: packageId,
+    food = [],
+    decorations = [],
+    services = [],
+  } = body;
+
+  const hall = await Hall.findOne({ _id: hallId, isActive: true });
+  if (!hall) throw new BookingError(404, "Selected hall does not exist or is not active");
+
+  if (guestCount > hall.capacity) {
+    throw new BookingError(400, `Guest count exceeds hall capacity (${hall.capacity})`);
+  }
+
+  const normalizedEventDate = toDateOnly(eventDate);
+
+  // Early, cheap rejection; the authoritative check runs again under the
+  // hall/date lock right before insert (see below).
+  const earlyConflict = await findConflictingBooking(hall._id, normalizedEventDate, startTime, endTime);
+  if (earlyConflict) throw new BookingError(409, "Hall is not available for the selected date and time");
+
+  let packagePrice = 0;
+  let validPackageId;
+  if (packageId) {
+    const pkg = await Package.findOne({ _id: packageId, isActive: true });
+    if (!pkg) throw new BookingError(400, "Selected package is invalid or inactive");
+    packagePrice = pkg.price;
+    validPackageId = pkg._id;
+  }
+
+  const foodResult = await priceActiveItems(Food, food);
+  if (foodResult.invalid) throw new BookingError(400, "One or more selected food items are invalid or inactive");
+
+  const decorationResult = await priceActiveItems(Decoration, decorations);
+  if (decorationResult.invalid) {
+    throw new BookingError(400, "One or more selected decoration items are invalid or inactive");
+  }
+
+  const serviceResult = await priceActiveItems(AdditionalService, services);
+  if (serviceResult.invalid) {
+    throw new BookingError(400, "One or more selected additional services are invalid or inactive");
+  }
+
+  const estimatedCost =
+    hall.price + packagePrice + foodResult.total + decorationResult.total + serviceResult.total;
+
+  const lockKey = `${hall._id}:${normalizedEventDate.toISOString()}`;
+  const booking = await withHallDateLock(lockKey, async () => {
+    const conflict = await findConflictingBooking(hall._id, normalizedEventDate, startTime, endTime);
+    if (conflict) return null;
+
+    return Booking.create({
+      hall: hall._id,
       eventType,
-      eventDate,
+      eventDate: normalizedEventDate,
       startTime,
       endTime,
       guestCount,
       requirements,
-      package: packageId,
-      food = [],
-      decorations = [],
-      services = [],
-    } = req.body;
-
-    const hall = await Hall.findOne({ _id: hallId, isActive: true });
-    if (!hall) {
-      res.status(404);
-      return next(new Error("Selected hall does not exist or is not active"));
-    }
-
-    if (guestCount > hall.capacity) {
-      res.status(400);
-      return next(new Error(`Guest count exceeds hall capacity (${hall.capacity})`));
-    }
-
-    const normalizedEventDate = toDateOnly(eventDate);
-
-    // Early, cheap rejection; the authoritative check runs again under the
-    // hall/date lock right before insert (see below).
-    const earlyConflict = await findConflictingBooking(hall._id, normalizedEventDate, startTime, endTime);
-    if (earlyConflict) {
-      res.status(409);
-      return next(new Error("Hall is not available for the selected date and time"));
-    }
-
-    let packagePrice = 0;
-    let validPackageId;
-    if (packageId) {
-      const pkg = await Package.findOne({ _id: packageId, isActive: true });
-      if (!pkg) {
-        res.status(400);
-        return next(new Error("Selected package is invalid or inactive"));
-      }
-      packagePrice = pkg.price;
-      validPackageId = pkg._id;
-    }
-
-    const foodResult = await priceActiveItems(Food, food);
-    if (foodResult.invalid) {
-      res.status(400);
-      return next(new Error("One or more selected food items are invalid or inactive"));
-    }
-
-    const decorationResult = await priceActiveItems(Decoration, decorations);
-    if (decorationResult.invalid) {
-      res.status(400);
-      return next(new Error("One or more selected decoration items are invalid or inactive"));
-    }
-
-    const serviceResult = await priceActiveItems(AdditionalService, services);
-    if (serviceResult.invalid) {
-      res.status(400);
-      return next(new Error("One or more selected additional services are invalid or inactive"));
-    }
-
-    const estimatedCost =
-      hall.price + packagePrice + foodResult.total + decorationResult.total + serviceResult.total;
-
-    const lockKey = `${hall._id}:${normalizedEventDate.toISOString()}`;
-    const booking = await withHallDateLock(lockKey, async () => {
-      const conflict = await findConflictingBooking(hall._id, normalizedEventDate, startTime, endTime);
-      if (conflict) return null;
-
-      return Booking.create({
-        customer: req.user.id,
-        hall: hall._id,
-        eventType,
-        eventDate: normalizedEventDate,
-        startTime,
-        endTime,
-        guestCount,
-        requirements,
-        package: validPackageId,
-        food: foodResult.validIds,
-        decorations: decorationResult.validIds,
-        services: serviceResult.validIds,
-        estimatedCost,
-        status: BOOKING_STATUS.PENDING,
-      });
+      package: validPackageId,
+      food: foodResult.validIds,
+      decorations: decorationResult.validIds,
+      services: serviceResult.validIds,
+      estimatedCost,
+      ...extra,
     });
+  });
 
-    if (!booking) {
-      res.status(409);
-      return next(new Error("Hall is not available for the selected date and time"));
-    }
+  if (!booking) throw new BookingError(409, "Hall is not available for the selected date and time");
+  return booking;
+};
 
+export const createBooking = async (req, res, next) => {
+  try {
+    const booking = await createPricedBooking(req.body, {
+      customer: req.user.id,
+      source: BOOKING_SOURCE.ONLINE,
+      status: BOOKING_STATUS.PENDING,
+    });
     res.status(201).json({ success: true, data: booking });
   } catch (error) {
+    if (error instanceof BookingError) {
+      res.status(error.status);
+      return next(new Error(error.message));
+    }
+    next(error);
+  }
+};
+
+// Manager/Owner. Books a hall for a customer who came to the venue in
+// person — no online account needed; their contact details are stored on
+// the booking. Same pricing, availability and double-booking rules as an
+// online request. The manager entering it is the one accepting it, so it
+// starts APPROVED (attributed to them, like an approval) and then follows
+// the normal workflow: an advance payment (recorded offline, or online)
+// confirms it, after which a coordinator can be assigned. It starts
+// unpaid — creating it never marks anything as paid.
+export const createWalkInBooking = async (req, res, next) => {
+  try {
+    const { customerName, customerPhone, customerEmail } = req.body;
+    const now = new Date();
+    const booking = await createPricedBooking(req.body, {
+      customer: null,
+      source: BOOKING_SOURCE.WALK_IN,
+      walkInCustomer: {
+        name: customerName,
+        phone: customerPhone,
+        ...(customerEmail && { email: customerEmail }),
+      },
+      createdBy: req.user.id,
+      status: BOOKING_STATUS.APPROVED,
+      decidedBy: req.user.id,
+      decidedAt: now,
+    });
+    await booking.populate(MANAGEMENT_POPULATE);
+    res.status(201).json({ success: true, data: booking });
+  } catch (error) {
+    if (error instanceof BookingError) {
+      res.status(error.status);
+      return next(new Error(error.message));
+    }
     next(error);
   }
 };
@@ -427,8 +454,9 @@ export const getBookingById = async (req, res, next) => {
     }
 
     // customer/coordinator are populated (see SELECTION_POPULATE), so they're
-    // User documents here, not bare ObjectIds — compare by _id.
-    const isOwner = booking.customer._id.toString() === req.user.id;
+    // User documents here, not bare ObjectIds — compare by _id. Walk-in
+    // bookings may have no customer account at all.
+    const isOwner = booking.customer?._id?.toString() === req.user.id;
     const isAssignedCoordinator = booking.coordinator?._id?.toString() === req.user.id;
     if (!isOwner && !isAssignedCoordinator && !isManagement) {
       res.status(403);

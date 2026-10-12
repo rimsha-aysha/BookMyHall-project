@@ -11,7 +11,8 @@
     "seed:gallery": "node scripts/seedGallery.js",
     "migrate:tasks": "node scripts/migratePreparationTasks.js",
     "migrate:atlas": "node scripts/migrateToAtlas.js",
-    "check:cloudinary": "node scripts/checkCloudinary.js"
+    "check:cloudinary": "node scripts/checkCloudinary.js",
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.js\""
   },
   "keywords": [],
   "author": "",
@@ -30,6 +31,8 @@
     "razorpay": "^2.9.8"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "mongodb-memory-server": "^11.3.0",
+    "nodemon": "^3.1.14",
+    "supertest": "^7.3.1"
   }
 }

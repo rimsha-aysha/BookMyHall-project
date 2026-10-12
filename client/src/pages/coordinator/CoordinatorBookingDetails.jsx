@@ -375,9 +375,9 @@ const CoordinatorBookingDetails = () => {
                     <div>
                       <dt>Customer</dt>
                       <dd>
-                        {booking.customer?.name}
+                        {booking.customer?.name || booking.walkInCustomer?.name}
                         <br />
-                        <span className="muted small">{booking.customer?.email}</span>
+                        <span className="muted small">{booking.customer?.email || booking.walkInCustomer?.email}</span>
                       </dd>
                     </div>
                     <div>

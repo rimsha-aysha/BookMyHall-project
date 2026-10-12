@@ -130,7 +130,10 @@ const PaymentPage = () => {
 
   const isLoading = loading || summaryLoading;
   const busy = phase !== "idle";
-  const paid = summary?.payment;
+  // Once the advance is in (online and/or paid at the venue) the booking is
+  // no longer awaiting payment; until then only the rest of it is due here.
+  const paid = booking && summary && booking.status !== "approved" && summary.totalPaid > 0 ? summary.payment : null;
+  const due = summary ? summary.advanceDue ?? summary.advanceAmount : 0;
   const outcomeInfo = outcome && OUTCOME_MESSAGES[outcome.type];
 
   return (
@@ -211,10 +214,18 @@ const PaymentPage = () => {
                         <dt>Amount paid</dt>
                         <dd>{formatRs(paid.amount)}</dd>
                       </div>
-                      <div>
-                        <dt>{paid.gateway === "razorpay" ? "Razorpay payment ID" : "Transaction"}</dt>
-                        <dd className="mono small">{paid.razorpayPaymentId || paid.transactionId}</dd>
-                      </div>
+                      {(paid.razorpayPaymentId || paid.transactionId) && (
+                        <div>
+                          <dt>{paid.gateway === "razorpay" ? "Razorpay payment ID" : "Reference"}</dt>
+                          <dd className="mono small">{paid.razorpayPaymentId || paid.transactionId}</dd>
+                        </div>
+                      )}
+                      {summary.totalPaid !== paid.amount && (
+                        <div>
+                          <dt>Total paid</dt>
+                          <dd>{formatRs(summary.totalPaid)}</dd>
+                        </div>
+                      )}
                       {paid.method && (
                         <div>
                           <dt>Method</dt>
@@ -245,9 +256,10 @@ const PaymentPage = () => {
                 ) : booking.status === "approved" ? (
                   <>
                     <h2>Advance due</h2>
-                    <p className="price price-xl">{formatRs(summary.advanceAmount)}</p>
+                    <p className="price price-xl">{formatRs(due)}</p>
                     <p className="muted small">
                       {summary.advancePercentage}% of {formatRs(summary.totalCost)} — paying confirms your date.
+                      {summary.totalPaid > 0 && ` ${formatRs(summary.totalPaid)} has already been received.`}
                     </p>
 
                     {!user?.phone && (
@@ -277,7 +289,7 @@ const PaymentPage = () => {
                             ? "Confirming your payment…"
                             : outcome
                               ? "Try again"
-                              : `Pay ${formatRs(summary.advanceAmount)}`}
+                              : `Pay ${formatRs(due)}`}
                     </button>
                     <p className="muted small center">
                       Secure payment by Razorpay (test mode) — card, UPI, netbanking or wallet.

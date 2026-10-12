@@ -3,12 +3,7 @@ import { reportApi } from "../../api/reportApi.js";
 import PageHeader from "../../components/PageHeader.jsx";
 import { LoadingState, EmptyState, ErrorState } from "../../components/States.jsx";
 import { formatDate, formatRs } from "../../utils/format.js";
-import { PAYMENT_METHOD_LABELS } from "../../constants/payment.js";
-
-const PAYMENT_STATUS_LABELS = {
-  success: "Success",
-  failed: "Failed",
-};
+import { PAYMENT_METHOD_LABELS, PAYMENT_GATEWAY_LABELS, paymentRecordStatus } from "../../constants/payment.js";
 
 const PaymentDirectory = () => {
   const { data: payments, loading, error, reload } = useFetch(reportApi.getPaymentList);
@@ -19,14 +14,14 @@ const PaymentDirectory = () => {
       <PageHeader
         eyebrow="Admin"
         title="Payments"
-        lead="All advance payments received for bookings."
+        lead="All payments for bookings — online (Razorpay) and offline (cash, UPI, bank transfer) recorded by staff."
         actions={payments?.length > 0 && <span className="badge badge-success">Received {formatRs(total)}</span>}
       />
 
       {loading && <LoadingState variant="list" count={3} />}
       {error && <ErrorState message={error} onRetry={reload} />}
       {!loading && !error && (!payments || payments.length === 0) && (
-        <EmptyState icon="card" title="No payments yet" message="Advance payments will be listed here." />
+        <EmptyState icon="card" title="No payments yet" message="Payments will be listed here." />
       )}
       {!loading && !error && payments?.length > 0 && (
         <table className="data-table">
@@ -59,7 +54,7 @@ const PaymentDirectory = () => {
                   {p.customer ? (
                     <span className="table-title">
                       {p.customer.name}
-                      <span className="muted small">{p.customer.email}</span>
+                      <span className="muted small">{p.customer.walkIn ? "Walk-in customer" : p.customer.email}</span>
                     </span>
                   ) : (
                     "Unknown"
@@ -69,14 +64,16 @@ const PaymentDirectory = () => {
                   <span className="price">{formatRs(p.amount)}</span>
                 </td>
                 <td data-label="Status">
-                  <span className={`badge ${p.status === "success" ? "badge-success" : "badge-danger"}`}>
-                    {PAYMENT_STATUS_LABELS[p.status] || p.status}
-                  </span>
+                  <span className={`badge badge-${paymentRecordStatus(p).tone}`}>{paymentRecordStatus(p).label}</span>
+                  {p.confirmedBy && <span className="muted small"> by {p.confirmedBy}</span>}
                 </td>
                 <td data-label="Method">
                   <span className="table-title">
                     {PAYMENT_METHOD_LABELS[p.method] || p.method || "—"}
-                    <span className="muted small">{p.gateway === "razorpay" ? "Razorpay (test)" : "Mock"}</span>
+                    <span className="muted small">
+                      {PAYMENT_GATEWAY_LABELS[p.gateway || "mock"] || p.gateway}
+                      {p.gateway === "offline" && p.transactionId && ` · Ref ${p.transactionId}`}
+                    </span>
                   </span>
                 </td>
                 <td data-label="Date">{new Date(p.paymentDate).toLocaleString()}</td>

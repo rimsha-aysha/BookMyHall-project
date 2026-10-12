@@ -1,6 +1,7 @@
 import { body, param, query } from "express-validator";
 import { BOOKING_STATUS } from "../config/bookingStatus.js";
 import { ALL_PREPARATION_STATUSES } from "../config/preparationStatus.js";
+import { normalizePhone, isValidIndianMobile, INVALID_PHONE_MESSAGE } from "../utils/phone.js";
 
 export const TIME_FORMAT = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -160,4 +161,40 @@ export const hallAvailabilityRules = [
 export const bookingCalendarRules = [
   monthQueryRule(),
   query("hall").optional({ values: "falsy" }).isMongoId().withMessage("Invalid hall id"),
+];
+
+// Walk-in booking (manager, at the venue): the same event/hall/selection
+// rules as an online request, plus the customer's contact details since
+// they may have no account. Phone is required so staff can reach them;
+// email is optional.
+export const walkInBookingRules = [
+  ...bookingCreateRules,
+  body("customerName")
+    .isString()
+    .withMessage("Customer name is required")
+    .bail()
+    .trim()
+    .notEmpty()
+    .withMessage("Customer name is required")
+    .bail()
+    .isLength({ max: 100 })
+    .withMessage("Customer name must be at most 100 characters"),
+  body("customerPhone")
+    .isString()
+    .withMessage("Customer phone number is required")
+    .bail()
+    .customSanitizer(normalizePhone)
+    .custom((value) => {
+      if (!isValidIndianMobile(value)) throw new Error(INVALID_PHONE_MESSAGE);
+      return true;
+    }),
+  body("customerEmail")
+    .optional({ values: "falsy" })
+    .isString()
+    .bail()
+    .trim()
+    .isEmail()
+    .withMessage("Customer email must be a valid email address")
+    .bail()
+    .normalizeEmail({ gmail_remove_dots: false }),
 ];

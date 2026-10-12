@@ -6,7 +6,8 @@ import { issueApi } from "../../api/issueApi.js";
 import { bookingApi } from "../../api/bookingApi.js";
 import PageHeader from "../../components/PageHeader.jsx";
 import StatCard, { StatGrid, ActionCard } from "../../components/StatCard.jsx";
-import { StatusBadge } from "../../components/BookingStatus.jsx";
+import { StatusBadge, WalkInBadge, PaymentStatusBadge } from "../../components/BookingStatus.jsx";
+import { bookingCustomer } from "../../utils/booking.js";
 import DateTile from "../../components/DateTile.jsx";
 import Icon from "../../components/Icon.jsx";
 import { LoadingState, EmptyState, ErrorState } from "../../components/States.jsx";
@@ -29,7 +30,8 @@ const TASK_STATUS_LABELS = {
 const noData = () => Promise.resolve({ data: { data: null } });
 
 const QUICK_ACTIONS = [
-  { to: "/manage/bookings", icon: "list", title: "Review bookings", text: "Approve or reject requests", perm: "bookingManagement" },
+  { to: "/manage/bookings/walk-in", icon: "plus", title: "Walk-in booking", text: "Book for a customer at the venue", perm: "bookingManagement" },
+  { to: "/manage/bookings", icon: "list", title: "Review bookings", text: "Approve, reject and record payments", perm: "bookingManagement" },
   { to: "/manage/calendar", icon: "calendar", title: "Booking calendar", text: "All halls by date", perm: "bookingManagement" },
   { to: "/manage/coordinators", icon: "users", title: "Coordinators", text: "Create and manage accounts", perm: "coordinatorManagement" },
   { to: "/manage/halls", icon: "building", title: "Halls", text: "Photos, capacity and pricing", perm: "catalogManagement" },
@@ -74,8 +76,11 @@ const ManagerDashboard = () => {
               <Link to="/manage/calendar" className="button-link">
                 <Icon name="calendar" size={16} /> Calendar
               </Link>
-              <Link to="/manage/bookings" className="button-link button-primary">
+              <Link to="/manage/bookings" className="button-link">
                 Review bookings
+              </Link>
+              <Link to="/manage/bookings/walk-in" className="button-link button-primary">
+                <Icon name="plus" size={16} /> Walk-in Booking
               </Link>
             </>
           )
@@ -122,11 +127,11 @@ const ManagerDashboard = () => {
                       <DateTile date={b.eventDate} />
                       <div className="booking-row-main">
                         <div className="booking-row-title">
-                          {b.eventType} · {b.hall?.name}
+                          {b.eventType} · {b.hall?.name} <WalkInBadge source={b.source} />
                         </div>
                         <div className="booking-row-meta">
                           <span>
-                            <Icon name="user" size={14} /> {b.customer?.name}
+                            <Icon name="user" size={14} /> {bookingCustomer(b).name}
                           </span>
                           <span>
                             <Icon name="clock" size={14} /> {formatTimeRange(b.startTime, b.endTime)}
@@ -138,6 +143,7 @@ const ManagerDashboard = () => {
                       </div>
                       <div className="booking-row-side">
                         <StatusBadge status={b.status} />
+                        <PaymentStatusBadge status={b.paymentStatus} />
                       </div>
                     </Link>
                   ))}
@@ -234,8 +240,26 @@ const ManagerDashboard = () => {
                       <dd>{overview.paymentSummary.awaitingPayment}</dd>
                     </div>
                     <div>
-                      <dt>Paid</dt>
-                      <dd>{overview.paymentSummary.paid}</dd>
+                      <dt>Partially paid</dt>
+                      <dd>{overview.paymentSummary.partiallyPaid ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Fully paid</dt>
+                      <dd>{overview.paymentSummary.fullyPaid ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Offline payments awaiting confirmation</dt>
+                      <dd>
+                        {overview.paymentSummary.offlineAwaitingConfirmation > 0 ? (
+                          <span className="badge badge-warning">{overview.paymentSummary.offlineAwaitingConfirmation}</span>
+                        ) : (
+                          overview.paymentSummary.offlineAwaitingConfirmation ?? "—"
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Walk-in bookings</dt>
+                      <dd>{overview.paymentSummary.walkInBookings ?? "—"}</dd>
                     </div>
                   </dl>
                 </div>

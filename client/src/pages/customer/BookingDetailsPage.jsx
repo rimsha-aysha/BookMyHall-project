@@ -8,6 +8,7 @@ import { StatusBadge, BookingTimeline } from "../../components/BookingStatus.jsx
 import { formatRs, formatDate, formatTimeRange, apiError } from "../../utils/format.js";
 import Icon from "../../components/Icon.jsx";
 import { ErrorState } from "../../components/States.jsx";
+import { PAYMENT_METHOD_LABELS } from "../../constants/payment.js";
 
 const PREPARATION_STATUS_LABELS = {
   not_started: "Not started yet",
@@ -161,7 +162,7 @@ const BookingDetailsPage = () => {
             <p className="next-step">{NEXT_STEP[booking.status]}</p>
             {booking.status === "approved" && (
               <Link to={`/my-bookings/${booking._id}/pay`} className="button-link button-primary">
-                Pay Now{payment ? ` — ${formatRs(payment.advanceAmount)} advance` : ""}
+                Pay Now{payment ? ` — ${formatRs(payment.advanceDue ?? payment.advanceAmount)} advance` : ""}
               </Link>
             )}
             {booking.status === "rejected" && (
@@ -216,8 +217,12 @@ const BookingDetailsPage = () => {
                     <div>
                       <dt>Payment status</dt>
                       <dd>
-                        {payment.payment ? (
+                        {payment.paymentStatus === "paid" ? (
+                          <span className="badge badge-success">Fully paid</span>
+                        ) : payment.totalPaid > 0 && payment.advanceDue === 0 ? (
                           <span className="badge badge-success">Advance paid</span>
+                        ) : payment.totalPaid > 0 ? (
+                          <span className="badge badge-warning">Part of advance received</span>
                         ) : booking.status === "approved" ? (
                           <span className="badge badge-warning">Due now</span>
                         ) : booking.status === "pending" ? (
@@ -227,17 +232,22 @@ const BookingDetailsPage = () => {
                         )}
                       </dd>
                     </div>
-                    {payment.payment && (
-                      <>
-                        <div>
-                          <dt>Paid on</dt>
-                          <dd>{formatDate(payment.payment.paidAt || payment.payment.createdAt)}</dd>
-                        </div>
-                        <div>
-                          <dt>Transaction</dt>
-                          <dd className="mono small">{payment.payment.transactionId}</dd>
-                        </div>
-                      </>
+                    {(payment.payments || []).map((p) => (
+                      <div key={p._id}>
+                        <dt>
+                          {formatDate(p.paidAt || p.createdAt)} ·{" "}
+                          {p.gateway === "offline" ? "Paid at venue" : "Paid online"}
+                          {p.method && ` (${PAYMENT_METHOD_LABELS[p.method] || p.method})`}
+                          {p.transactionId && <span className="mono small"> · {p.transactionId}</span>}
+                        </dt>
+                        <dd>{formatRs(p.amount)}</dd>
+                      </div>
+                    ))}
+                    {payment.totalPaid > 0 && (
+                      <div>
+                        <dt>Total paid</dt>
+                        <dd>{formatRs(payment.totalPaid)}</dd>
+                      </div>
                     )}
                     <div className="cost-total">
                       <dt>Remaining balance</dt>

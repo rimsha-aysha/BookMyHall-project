@@ -11,6 +11,7 @@ import {
   checkAvailabilityRules,
   hallAvailabilityRules,
   bookingCalendarRules,
+  walkInBookingRules,
 } from "../validators/booking.validators.js";
 import {
   createBooking,
@@ -24,6 +25,7 @@ import {
   checkAvailability,
   getHallAvailability,
   getBookingCalendar,
+  createWalkInBooking,
 } from "../controllers/booking.controller.js";
 
 const router = Router();
@@ -33,15 +35,21 @@ const coordinatorManageOnly = [...manageOnly, requirePermission(PERMISSIONS.COOR
 
 router.post("/", protect, authorize(ROLES.CUSTOMER), bookingCreateRules, validate, createBooking);
 router.get("/my", protect, authorize(ROLES.CUSTOMER), getMyBookings);
+
+// Walk-in booking entered by staff for a customer at the venue (who may have
+// no online account). Same booking-management gate as reviewing requests.
+router.post("/walk-in", ...bookingManageOnly, walkInBookingRules, validate, createWalkInBooking);
 router.get("/manage/all", ...bookingManageOnly, listAllBookings);
 router.get("/coordinator/my", protect, authorize(ROLES.COORDINATOR), getMyAssignedBookings);
 
 // Must be registered before "/:id" — both are single-segment GET routes and
 // "/:id" would otherwise swallow this path and try to treat it as a booking id.
+// Also used by staff entering a walk-in booking (booking management only).
 router.get(
   "/check-availability",
   protect,
-  authorize(ROLES.CUSTOMER),
+  authorize(ROLES.CUSTOMER, ROLES.MANAGER, ROLES.OWNER),
+  requirePermission(PERMISSIONS.BOOKING_MANAGEMENT),
   checkAvailabilityRules,
   validate,
   checkAvailability
@@ -52,7 +60,8 @@ router.get(
 router.get(
   "/availability/:hallId",
   protect,
-  authorize(ROLES.CUSTOMER),
+  authorize(ROLES.CUSTOMER, ROLES.MANAGER, ROLES.OWNER),
+  requirePermission(PERMISSIONS.BOOKING_MANAGEMENT),
   hallAvailabilityRules,
   validate,
   getHallAvailability

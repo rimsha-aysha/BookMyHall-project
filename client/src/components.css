@@ -19,6 +19,7 @@
 .center { text-align: center; justify-content: center; }
 .mono { font-family: var(--mono); }
 .mt-8 { margin-top: 8px; }
+.mb-8 { margin-bottom: 8px; }
 .pre-line { white-space: pre-line; }
 .success-text { color: var(--success); font-weight: 500; }
 .danger-text { color: var(--danger); font-weight: 500; }
@@ -2547,3 +2548,52 @@ button.danger { color: var(--danger); }
   .stat-card { padding: 14px 16px; }
   .stat-value { font-size: 1.6rem; }
 }
+
+/* ---- Payments: totals, history, offline recording ---- */
+.payment-totals {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr));
+  margin: 0 0 14px;
+}
+
+.payment-totals > div {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.payment-totals dt { font-size: 0.8rem; color: var(--text); }
+.payment-totals dd { margin: 2px 0 0; font-weight: 700; color: var(--text-h); font-variant-numeric: tabular-nums; }
+.payment-totals .is-due dd { color: var(--warning); }
+.payment-totals .is-clear dd { color: var(--success); }
+
+.payment-meter { margin: 0 0 16px; }
+.payment-meter > span { background: var(--success); }
+
+.payment-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+
+.payment-history > li {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.payment-history > li.is-pending { border-left: 3px solid var(--warning); }
+.payment-history > li.is-cancelled { opacity: 0.7; }
+
+.payment-history .payment-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+}
+
+.payment-history .button-row { margin-top: 6px; }
+
+.offline-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.offline-form h3 { margin-top: 0; }

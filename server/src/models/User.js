@@ -60,6 +60,7 @@ const userSchema = new mongoose.Schema(
       [PERMISSIONS.CATALOG_MANAGEMENT]: { type: Boolean, default: true },
       [PERMISSIONS.COORDINATOR_MANAGEMENT]: { type: Boolean, default: true },
       [PERMISSIONS.PAYMENT_VIEWING]: { type: Boolean, default: true },
+      [PERMISSIONS.PAYMENT_RECORDING]: { type: Boolean, default: true },
       [PERMISSIONS.PREPARATION_MONITORING]: { type: Boolean, default: true },
       [PERMISSIONS.ISSUE_MANAGEMENT]: { type: Boolean, default: true },
       [PERMISSIONS.GALLERY_MANAGEMENT]: { type: Boolean, default: true },

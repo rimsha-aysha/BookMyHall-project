@@ -11,7 +11,7 @@ export const createReview = async (req, res, next) => {
       return next(new Error("Booking not found"));
     }
 
-    if (booking.customer.toString() !== req.user.id) {
+    if (booking.customer?.toString() !== req.user.id) {
       res.status(403);
       return next(new Error("You are not authorized to review this booking"));
     }
@@ -48,7 +48,7 @@ export const getReviewForBooking = async (req, res, next) => {
       return next(new Error("Booking not found"));
     }
 
-    const isOwner = booking.customer.toString() === req.user.id;
+    const isOwner = booking.customer?.toString() === req.user.id;
     const isManagement = [ROLES.MANAGER, ROLES.OWNER].includes(req.user.role);
     if (!isOwner && !isManagement) {
       res.status(403);

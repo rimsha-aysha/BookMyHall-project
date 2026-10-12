@@ -1,13 +1,70 @@
 import mongoose from "mongoose";
-import { ALL_BOOKING_STATUSES, BOOKING_STATUS } from "../config/bookingStatus.js";
+import {
+  ALL_BOOKING_STATUSES,
+  BOOKING_STATUS,
+  ALL_BOOKING_SOURCES,
+  BOOKING_SOURCE,
+} from "../config/bookingStatus.js";
 import { ALL_PREPARATION_STATUSES, PREPARATION_STATUS } from "../config/preparationStatus.js";
+import { ALL_BOOKING_PAYMENT_STATUSES, BOOKING_PAYMENT_STATUS } from "../config/paymentStatus.js";
+import { INDIAN_MOBILE_REGEX, INVALID_PHONE_MESSAGE, normalizePhone } from "../utils/phone.js";
+
+const isWalkIn = function isWalkIn() {
+  return this.source === BOOKING_SOURCE.WALK_IN;
+};
+
+// Contact details for a walk-in customer, who may have no online account.
+const walkInCustomerSchema = new mongoose.Schema(
+  {
+    name: { type: String, trim: true, required: [true, "Customer name is required"] },
+    phone: {
+      type: String,
+      trim: true,
+      set: normalizePhone,
+      match: [INDIAN_MOBILE_REGEX, INVALID_PHONE_MESSAGE],
+      required: [true, "Customer phone number is required"],
+    },
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      match: [/^\S+@\S+\.\S+$/, "Please provide a valid email"],
+    },
+  },
+  { _id: false }
+);
 
 const bookingSchema = new mongoose.Schema(
   {
+    // Online bookings belong to a customer account. Walk-in bookings may
+    // have none — their contact details live in walkInCustomer instead.
     customer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: [
+        function customerRequiredForOnline() {
+          return !isWalkIn.call(this);
+        },
+        "Customer is required",
+      ],
+      default: null,
+    },
+    // Existing bookings have no source field and read as "online".
+    source: {
+      type: String,
+      enum: ALL_BOOKING_SOURCES,
+      default: BOOKING_SOURCE.ONLINE,
+    },
+    walkInCustomer: {
+      type: walkInCustomerSchema,
+      required: [isWalkIn, "Walk-in customer details are required"],
+      default: undefined,
+    },
+    // Manager/Owner who entered a walk-in booking.
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
     },
     hall: {
       type: mongoose.Schema.Types.ObjectId,
@@ -87,6 +144,21 @@ const bookingSchema = new mongoose.Schema(
       type: String,
       enum: ALL_PREPARATION_STATUSES,
       default: PREPARATION_STATUS.NOT_STARTED,
+    },
+
+    // Cached totals of this booking's SUCCESS payments (Razorpay + confirmed
+    // offline). Recomputed from the Payment records after every payment
+    // change (services/paymentLedger.js) — never incremented, so a payment
+    // can't be counted twice. A new booking is always unpaid.
+    amountPaid: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    paymentStatus: {
+      type: String,
+      enum: ALL_BOOKING_PAYMENT_STATUSES,
+      default: BOOKING_PAYMENT_STATUS.UNPAID,
     },
   },
   { timestamps: true }

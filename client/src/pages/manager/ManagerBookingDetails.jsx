@@ -7,11 +7,13 @@ import { listCoordinators } from "../../api/authApi.js";
 import { taskApi } from "../../api/taskApi.js";
 import { issueApi } from "../../api/issueApi.js";
 import { reviewApi } from "../../api/reviewApi.js";
-import { StatusBadge } from "../../components/BookingStatus.jsx";
+import { StatusBadge, WalkInBadge, PaymentStatusBadge } from "../../components/BookingStatus.jsx";
+import BookingPaymentPanel from "../../components/BookingPaymentPanel.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
+import { bookingCustomer, isWalkIn } from "../../utils/booking.js";
 import Icon from "../../components/Icon.jsx";
 import { ErrorState } from "../../components/States.jsx";
 import { apiError, formatDate, formatRs, formatTimeRange } from "../../utils/format.js";
-import { PAYMENT_METHOD_LABELS } from "../../constants/payment.js";
 import { formatPhone } from "../../utils/phone.js";
 
 const NamedList = ({ items }) => {
@@ -68,7 +70,10 @@ const ManagerBookingDetails = () => {
   const fetchBooking = useCallback(() => bookingApi.getById(id), [id]);
   const { data: booking, loading, error, reload } = useFetch(fetchBooking);
   const fetchPayment = useCallback(() => paymentApi.getForBooking(id), [id]);
-  const { data: paymentSummary } = useFetch(fetchPayment);
+  const { data: paymentSummary, error: paymentError, reload: reloadPayment } = useFetch(fetchPayment);
+  const { user } = useAuth();
+  // Owner-controlled per-manager permissions (the API enforces them too).
+  const can = (key) => user?.role === "owner" || user?.permissions?.[key] !== false;
   const { data: coordinators } = useFetch(listCoordinators);
   const fetchTasks = useCallback(() => taskApi.listForBooking(id), [id]);
   const { data: tasks, loading: tasksLoading, error: tasksError } = useFetch(fetchTasks);
@@ -128,7 +133,14 @@ const ManagerBookingDetails = () => {
     }
   };
 
+  // A payment can confirm the booking (approved -> confirmed), so refresh both.
+  const handlePaymentChanged = () => {
+    reload();
+    reloadPayment();
+  };
+
   const activeCoordinators = (coordinators || []).filter((c) => c.isActive !== false);
+  const customer = bookingCustomer(booking);
 
   return (
     <div>
@@ -153,6 +165,8 @@ const ManagerBookingDetails = () => {
                 {booking.eventType} · {booking.hall?.name}
               </h1>
               <StatusBadge status={booking.status} />
+              <PaymentStatusBadge status={paymentSummary?.paymentStatus || booking.paymentStatus} />
+              <WalkInBadge source={booking.source} />
             </div>
             <div className="card-meta large">
               <span>
@@ -180,21 +194,43 @@ const ManagerBookingDetails = () => {
                   <dl className="kv-list">
                     <div>
                       <dt>Customer</dt>
-                      <dd>{booking.customer?.name}</dd>
+                      <dd>{customer.name}</dd>
                     </div>
                     <div>
                       <dt>Email</dt>
                       <dd>
-                        <a href={`mailto:${booking.customer?.email}`}>{booking.customer?.email}</a>
+                        {customer.email ? (
+                          <a href={`mailto:${customer.email}`}>{customer.email}</a>
+                        ) : (
+                          <span className="muted">Not given</span>
+                        )}
                       </dd>
                     </div>
                     <div>
                       <dt>Phone</dt>
                       <dd>
-                        {booking.customer?.phone ? (
-                          <a href={`tel:+91${booking.customer.phone}`}>{formatPhone(booking.customer.phone)}</a>
+                        {customer.phone ? (
+                          <a href={`tel:+91${customer.phone}`}>{formatPhone(customer.phone)}</a>
                         ) : (
                           <span className="muted">Not added yet</span>
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Booking source</dt>
+                      <dd>
+                        {isWalkIn(booking) ? (
+                          <>
+                            Walk-in (no online account)
+                            {booking.createdBy?.name && (
+                              <>
+                                <br />
+                                <span className="muted small">Entered by {booking.createdBy.name}</span>
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          "Online request"
                         )}
                       </dd>
                     </div>
@@ -260,55 +296,15 @@ const ManagerBookingDetails = () => {
                   <h2>Payment</h2>
                 </div>
                 <div className="panel-body">
-                  {!paymentSummary && <p className="muted">Loading payment details…</p>}
-                  {paymentSummary && (
-                    <dl className="kv-list">
-                      <div>
-                        <dt>Total cost</dt>
-                        <dd>{formatRs(paymentSummary.totalCost)}</dd>
-                      </div>
-                      <div>
-                        <dt>Advance percentage</dt>
-                        <dd>{paymentSummary.advancePercentage}%</dd>
-                      </div>
-                      {paymentSummary.payment ? (
-                        <>
-                          <div>
-                            <dt>Advance paid</dt>
-                            <dd>{formatRs(paymentSummary.payment.amount)}</dd>
-                          </div>
-                          <div>
-                            <dt>Method</dt>
-                            <dd>{PAYMENT_METHOD_LABELS[paymentSummary.payment.method] || paymentSummary.payment.method}</dd>
-                          </div>
-                          <div>
-                            <dt>Transaction ID</dt>
-                            <dd className="mono small">{paymentSummary.payment.transactionId}</dd>
-                          </div>
-                          <div>
-                            <dt>Paid on</dt>
-                            <dd>{new Date(paymentSummary.payment.paidAt || paymentSummary.payment.createdAt).toLocaleString()}</dd>
-                          </div>
-                          <div>
-                            <dt>Remaining balance</dt>
-                            <dd>{formatRs(paymentSummary.remainingBalance)}</dd>
-                          </div>
-                        </>
-                      ) : (
-                        <div>
-                          <dt>Status</dt>
-                          <dd>
-                            {booking.status === "approved" ? (
-                              <span className="badge badge-warning">
-                                Awaiting advance ({formatRs(paymentSummary.advanceAmount)})
-                              </span>
-                            ) : (
-                              <span className="badge badge-neutral">Not applicable</span>
-                            )}
-                          </dd>
-                        </div>
-                      )}
-                    </dl>
+                  {paymentError ? (
+                    <p role="alert">{paymentError}</p>
+                  ) : (
+                    <BookingPaymentPanel
+                      booking={booking}
+                      summary={paymentSummary}
+                      canRecord={can("paymentRecording")}
+                      onChanged={handlePaymentChanged}
+                    />
                   )}
                 </div>
               </section>
@@ -342,7 +338,9 @@ const ManagerBookingDetails = () => {
                   <div className="panel-body">
                     {booking.status === "pending" && (
                       <>
-                        <p className="muted small">Approving lets the customer pay the advance to confirm the date.</p>
+                        <p className="muted small">
+                          Approving lets the customer pay the advance (online or at the venue) to confirm the date.
+                        </p>
                         <div className="button-row">
                           <button
                             type="button"
@@ -414,7 +412,7 @@ const ManagerBookingDetails = () => {
                       {booking.status === "pending"
                         ? "Approve the booking before assigning a coordinator."
                         : booking.status === "approved"
-                        ? "A coordinator can be assigned once the customer pays the advance and the booking is confirmed."
+                        ? "A coordinator can be assigned once the advance is paid (online, or recorded offline) and the booking is confirmed."
                         : "Coordinators can't be assigned to rejected or completed bookings."}
                     </p>
                   )}

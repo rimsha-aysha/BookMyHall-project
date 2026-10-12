@@ -40,6 +40,7 @@ import ManageDecorations from "../pages/manager/ManageDecorations.jsx";
 import ManageServices from "../pages/manager/ManageServices.jsx";
 import ManagerBookings from "../pages/manager/ManagerBookings.jsx";
 import ManagerBookingDetails from "../pages/manager/ManagerBookingDetails.jsx";
+import WalkInBooking from "../pages/manager/WalkInBooking.jsx";
 import ManageGallery from "../pages/manager/ManageGallery.jsx";
 import ManageCoordinators from "../pages/manager/ManageCoordinators.jsx";
 import BookingCalendar from "../pages/manager/BookingCalendar.jsx";
@@ -99,6 +100,7 @@ const AppRoutes = () => {
         <Route path="/manage/decorations" element={<ManageDecorations />} />
         <Route path="/manage/services" element={<ManageServices />} />
         <Route path="/manage/bookings" element={<ManagerBookings />} />
+        <Route path="/manage/bookings/walk-in" element={<WalkInBooking />} />
         <Route path="/manage/bookings/:id" element={<ManagerBookingDetails />} />
         <Route path="/manage/calendar" element={<BookingCalendar />} />
         <Route path="/manage/gallery" element={<ManageGallery />} />

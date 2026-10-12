@@ -266,7 +266,7 @@ const BookingCalendar = () => {
                         <dt>
                           <Icon name="user" size={14} /> Customer
                         </dt>
-                        <dd>{b.customer?.name || "—"}</dd>
+                        <dd>{b.customer?.name || b.walkInCustomer?.name || "—"}</dd>
                       </div>
                       <div>
                         <dt>

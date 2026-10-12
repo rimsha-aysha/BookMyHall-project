@@ -16,6 +16,7 @@ const PERMISSION_LABELS = {
   catalogManagement: "Catalog Management",
   coordinatorManagement: "Coordinator Management",
   paymentViewing: "Payment Viewing",
+  paymentRecording: "Offline Payment Recording & Confirmation",
   preparationMonitoring: "Preparation/Task Monitoring",
   issueManagement: "Issue Management",
   galleryManagement: "Event Gallery Management",

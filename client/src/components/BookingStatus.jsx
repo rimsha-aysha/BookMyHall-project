@@ -1,5 +1,7 @@
-// Booking status badge + lifecycle timeline, shared by the customer pages.
+// Booking status badge + lifecycle timeline, shared by the customer pages,
+// plus the payment-status and walk-in badges used on staff pages.
 import { STATUS_TONE } from "../constants/bookingStatus.js";
+import { BOOKING_PAYMENT_STATUS_LABELS, BOOKING_PAYMENT_STATUS_TONE } from "../constants/payment.js";
 
 const BOOKING_STATUS_LABELS = {
   pending: "Awaiting Approval",
@@ -16,6 +18,25 @@ export const StatusBadge = ({ status }) => (
     {BOOKING_STATUS_LABELS[status] || status}
   </span>
 );
+
+// Unpaid / Partially paid / Fully paid. Bookings saved before payment status
+// existed are filled in by the server, so a missing value just means unpaid.
+export const PaymentStatusBadge = ({ status }) => {
+  const key = status || "unpaid";
+  return (
+    <span className={`badge badge-${BOOKING_PAYMENT_STATUS_TONE[key] || "neutral"}`}>
+      {BOOKING_PAYMENT_STATUS_LABELS[key] || key}
+    </span>
+  );
+};
+
+// Shown only for bookings staff entered for a customer at the venue.
+export const WalkInBadge = ({ source }) =>
+  source === "walk_in" ? (
+    <span className="badge badge-info" title="Booked in person at the venue">
+      Walk-in
+    </span>
+  ) : null;
 
 const STEPS = [
   { key: "pending", label: "Requested", hint: "Sent to the manager" },

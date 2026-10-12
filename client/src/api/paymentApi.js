@@ -9,4 +9,8 @@ export const paymentApi = {
   reportFailure: (bookingId, razorpayOrderId, reason) =>
     api.post(`/payments/${bookingId}/failure`, { razorpay_order_id: razorpayOrderId, reason }),
   getForBooking: (bookingId) => api.get(`/payments/booking/${bookingId}`),
+  // Offline payments (cash/UPI/bank transfer/other) — manager/owner only.
+  recordOffline: (bookingId, data) => api.post(`/payments/booking/${bookingId}/offline`, data),
+  confirmOffline: (paymentId) => api.post(`/payments/offline/${paymentId}/confirm`),
+  cancelOffline: (paymentId, reason) => api.post(`/payments/offline/${paymentId}/cancel`, { reason }),
 };

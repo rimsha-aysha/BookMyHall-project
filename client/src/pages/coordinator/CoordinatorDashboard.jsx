@@ -65,7 +65,7 @@ const CoordinatorDashboard = () => {
               </div>
               <div className="booking-row-meta">
                 <span>
-                  <Icon name="user" size={14} /> {booking.customer?.name}
+                  <Icon name="user" size={14} /> {booking.customer?.name || booking.walkInCustomer?.name}
                 </span>
                 <span>
                   <Icon name="clock" size={14} /> {formatTimeRange(booking.startTime, booking.endTime)}

@@ -6,8 +6,10 @@ import CatalogGrid from "../../components/CatalogGrid.jsx";
 import PageHeader from "../../components/PageHeader.jsx";
 import DateTile from "../../components/DateTile.jsx";
 import Icon from "../../components/Icon.jsx";
-import { StatusBadge } from "../../components/BookingStatus.jsx";
+import { StatusBadge, PaymentStatusBadge, WalkInBadge } from "../../components/BookingStatus.jsx";
 import { formatRs, formatTimeRange } from "../../utils/format.js";
+import { bookingCustomer } from "../../utils/booking.js";
+import { BOOKING_PAYMENT_STATUS_LABELS } from "../../constants/payment.js";
 
 const STATUS_FILTERS = [
   ["all", "All"],
@@ -19,20 +21,32 @@ const STATUS_FILTERS = [
   ["rejected", "Rejected"],
 ];
 
-const matchesSearch = (b, q) =>
-  !q ||
-  [b.customer?.name, b.customer?.email, b.hall?.name, b.eventType]
+const matchesSearch = (b, q) => {
+  if (!q) return true;
+  const customer = bookingCustomer(b);
+  return [customer.name, customer.email, customer.phone, b.hall?.name, b.eventType]
     .filter(Boolean)
     .some((v) => v.toLowerCase().includes(q));
+};
+
+// Payment/source filter alongside the status chips.
+const matchesPayment = (b, filter) => {
+  if (filter === "all") return true;
+  if (filter === "walk_in") return b.source === "walk_in";
+  return (b.paymentStatus || "unpaid") === filter;
+};
 
 const ManagerBookings = () => {
   const { data, loading, error, reload } = useFetch(bookingApi.listAll);
   const [status, setStatus] = useState("all");
   const [search, setSearch] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState("all");
 
   const q = search.trim().toLowerCase();
   const counts = (data || []).reduce((acc, b) => ({ ...acc, [b.status]: (acc[b.status] || 0) + 1 }), {});
-  const items = (data || []).filter((b) => (status === "all" || b.status === status) && matchesSearch(b, q));
+  const items = (data || []).filter(
+    (b) => (status === "all" || b.status === status) && matchesPayment(b, paymentFilter) && matchesSearch(b, q)
+  );
 
   return (
     <div>
@@ -41,9 +55,14 @@ const ManagerBookings = () => {
         title="Bookings"
         lead="Review requests, track payments and open any booking to manage it."
         actions={
-          <Link to="/manage/calendar" className="button-link">
-            <Icon name="calendar" size={16} /> Calendar view
-          </Link>
+          <>
+            <Link to="/manage/calendar" className="button-link">
+              <Icon name="calendar" size={16} /> Calendar view
+            </Link>
+            <Link to="/manage/bookings/walk-in" className="button-link button-primary">
+              <Icon name="plus" size={16} /> Walk-in Booking
+            </Link>
+          </>
         }
       />
 
@@ -66,10 +85,22 @@ const ManagerBookings = () => {
           Search
           <input
             type="search"
-            placeholder="Customer, hall or event type"
+            placeholder="Customer, phone, hall or event type"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+        </label>
+        <label>
+          Payment
+          <select value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)}>
+            <option value="all">All payments</option>
+            {Object.entries(BOOKING_PAYMENT_STATUS_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+            <option value="walk_in">Walk-in bookings only</option>
+          </select>
         </label>
         {data && (
           <span className="toolbar-result muted small" aria-live="polite">
@@ -92,11 +123,11 @@ const ManagerBookings = () => {
             <DateTile date={booking.eventDate} />
             <div className="booking-row-main">
               <div className="booking-row-title">
-                {booking.eventType} · {booking.hall?.name}
+                {booking.eventType} · {booking.hall?.name} <WalkInBadge source={booking.source} />
               </div>
               <div className="booking-row-meta">
                 <span>
-                  <Icon name="user" size={14} /> {booking.customer?.name}
+                  <Icon name="user" size={14} /> {bookingCustomer(booking).name}
                 </span>
                 <span>
                   <Icon name="clock" size={14} /> {formatTimeRange(booking.startTime, booking.endTime)}
@@ -111,6 +142,7 @@ const ManagerBookings = () => {
             </div>
             <div className="booking-row-side">
               <StatusBadge status={booking.status} />
+              <PaymentStatusBadge status={booking.paymentStatus} />
               <span className="price">{formatRs(booking.estimatedCost)}</span>
             </div>
           </Link>

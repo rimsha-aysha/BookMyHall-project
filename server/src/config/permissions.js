@@ -6,6 +6,8 @@ export const PERMISSIONS = Object.freeze({
   CATALOG_MANAGEMENT: "catalogManagement",
   COORDINATOR_MANAGEMENT: "coordinatorManagement",
   PAYMENT_VIEWING: "paymentViewing",
+  // Record and confirm offline (cash/UPI/bank transfer) payments.
+  PAYMENT_RECORDING: "paymentRecording",
   PREPARATION_MONITORING: "preparationMonitoring",
   ISSUE_MANAGEMENT: "issueManagement",
   GALLERY_MANAGEMENT: "galleryManagement",
